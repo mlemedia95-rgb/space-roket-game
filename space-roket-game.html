@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Space Rocket</title>
+  <style>
+    html,body {
+      height:100%;
+      margin:0;
+      background: radial-gradient(circle at 10% 10%, #041026 0%, #000814 40%, #000000 100%);
+      color:#fff;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      -webkit-user-select:none;
+      user-select:none;
+      overflow:hidden;
+    }
+    #game {
+      display:block;
+      width:100%;
+      height:100%;
+      background: transparent;
+      cursor:pointer;
+    }
+    .ui {
+      position:fixed;
+      left:12px;
+      top:12px;
+      font-weight:600;
+      font-size:18px;
+      text-shadow:0 2px 8px rgba(0,0,0,0.6);
+    }
+    .overlay {
+      position:fixed;
+      inset:0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      pointer-events:none;
+    }
+    .panel {
+      pointer-events:auto;
+      background:rgba(0,0,0,0.5);
+      border:1px solid rgba(255,255,255,0.06);
+      padding:20px 28px;
+      border-radius:12px;
+      text-align:center;
+      backdrop-filter: blur(4px);
+    }
+    .hint {
+      margin-top:10px;
+      font-size:14px;
+      opacity:0.9;
+    }
+    .small {
+      font-size:13px;
+      opacity:0.85;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="ui" id="score">Skor: 0</div>
+  <div class="overlay" id="overlay">
+    <div class="panel" id="panel">
+      <h1 style="margin:0 0 6px 0">Space Rocket</h1>
+      <div class="small">Tek dokunuş / Space ile yukarı.</div>
+      <div class="hint">Başlamak için tıkla veya dokun.</div>
+      <div style="margin-top:8px;font-size:13px;opacity:0.8">Geçmiş en yüksek skor kaydedilmez — sayfayı yenilemeden oynayın.</div>
+    </div>
+  </div>
+  <script>
+    // Basit Space Rocket oyunu - tek dosya, internetsiz çalışır
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const overlay = document.getElementById('overlay');
+    const panel = document.getElementById('panel');
+
+    let W = window.innerWidth;
+    let H = window.innerHeight;
+    function resize() {
+      W = window.innerWidth;
+      H = window.innerHeight;
+      canvas.width = Math.max(480, Math.floor(W));
+      canvas.height = Math.max(320, Math.floor(H));
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Fizik
+    const GRAVITY = 0.5;
+    const THRUST = -9;
+    const MAX_VEL = 12;
+
+    // Roket
+    const rocket = {
+      x: Math.floor(canvas.width * 0.2),
+      y: Math.floor(canvas.height * 0.5),
+      vx: 0,
+      vy: 0,
+      radius: 14,
+      angle: 0
+    };
+
+    // Engeller: lazer kapıları (ince parlak dikey bariyerler, ortada açıklık)
+    const gates = [];
+    const GATE_WIDTH = 18;
+    const GATE_GAP = 140; // açıklık yüksekliği
+    const GATE_SPACING = 280; // x boşluğu
+    const GATE_SPEED = 2.6;
+    let frame = 0;
+
+    let score = 0;
+    let running = false;
+    let gameOver = false;
+
+    function reset() {
+      rocket.x = Math.floor(canvas.width * 0.2);
+      rocket.y = Math.floor(canvas.height * 0.5);
+      rocket.vx = 0;
+      rocket.vy = 0;
+      gates.length = 0;
+      score = 0;
+      frame = 0;
+      gameOver = false;
+      running = true;
+      overlay.style.display = 'none';
+      scoreEl.textContent = 'Skor: 0';
+    }
+
+    // başlangıç bir kapı ekle
+    function spawnGate(x) {
+      const gapY = 60 + Math.random() * (canvas.height - 160 - GATE_GAP);
+      gates.push({
+        x: x ?? canvas.width + 40,
+        gapY: gapY,
+        passed: false
+      });
+    }
+
+    // ilki hemen
+    spawnGate(canvas.width + 80);
+
+    function flap() {
+      if (gameOver) {
+        reset();
+        return;
+      }
+      // ani yukarı hız ver
+      rocket.vy = THRUST;
+      // hafif sarsıntı efekti için açıyı değiştir
+      rocket.angle = -0.5;
+    }
+
+    // Girişler
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        flap();
+      }
+    });
+    window.addEventListener('pointerdown', (e) => {
+      flap();
+    });
+
+    // Basit çarpışma: daire-dikdörtgen
+    function circleRectCollision(cx, cy, r, rx, ry, rw, rh) {
+      const nearestX = Math.max(rx, Math.min(cx, rx + rw));
+      const nearestY = Math.max(ry, Math.min(cy, ry + rh));
+      const dx = cx - nearestX;
+      const dy = cy - nearestY;
+      return (dx * dx + dy * dy) < (r * r);
+    }
+
+    function update() {
+      if (!running) return;
+      frame++;
+      // fizik
+      rocket.vy += GRAVITY;
+      rocket.vy = Math.max(Math.min(rocket.vy, MAX_VEL), -MAX_VEL);
+      rocket.y += rocket.vy;
+      // açı yavaşça normale dönsün
+      rocket.angle += (Math.min(1, rocket.vy / 20) - rocket.angle) * 0.08;
+
+      // kapıları hareket ettir
+      for (let i = gates.length - 1; i >= 0; i--) {
+        const g = gates[i];
+        g.x -= GATE_SPEED;
+        // skor kontrolü
+        if (!g.passed && (g.x + GATE_WIDTH) < rocket.x - rocket.radius) {
+          g.passed = true;
+          score++;
+          scoreEl.textContent = 'Skor: ' + score;
+        }
+        // çarpışma kontrolü: iki dikey blok (üst ve alt)
+        const topRect = { x: g.x, y: 0, w: GATE_WIDTH, h: g.gapY };
+        const bottomRect = { x: g.x, y: g.gapY + GATE_GAP, w: GATE_WIDTH, h: canvas.height - (g.gapY + GATE_GAP) };
+        if (circleRectCollision(rocket.x, rocket.y, rocket.radius, topRect.x, topRect.y, topRect.w, topRect.h) ||
+            circleRectCollision(rocket.x, rocket.y, rocket.radius, bottomRect.x, bottomRect.y, bottomRect.w, bottomRect.h)) {
+          // çarpışma
+          running = false;
+          gameOver = true;
+          showGameOver();
+        }
+        // ekran dışına çıkan kapıları sil
+        if (g.x + GATE_WIDTH < -50) {
+          gates.splice(i,1);
+        }
+      }
+
+      // yeni kapı üret
+      if (frame % Math.max(1, Math.floor(GATE_SPACING / GATE_SPEED)) === 0) {
+        spawnGate();
+      }
+
+      // yer sınırlarıyla çarpışma
+      if (rocket.y - rocket.radius < 0) {
+        rocket.y = rocket.radius;
+        rocket.vy = 0;
+      }
+      if (rocket.y + rocket.radius > canvas.height) {
+        rocket.y = canvas.height - rocket.radius;
+        rocket.vy = 0;
+        running = false;
+        gameOver = true;
+        showGameOver();
+      }
+    }
+
+    function drawBackground() {
+      // yıldızlar (statik, ama hafif parlayan)
+      ctx.fillStyle = '#000814';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      // birkaç yıldız
+      for (let i=0;i<60;i++) {
+        const sx = (i * 97) % canvas.width;
+        const sy = (i * 53 + (frame * 0.2)) % canvas.height;
+        const r = (i % 7 === 0) ? 1.6 : 0.8;
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.6 - (i%7)*0.07) + ')';
+        ctx.fillRect(sx, sy, r, r);
+      }
+    }
+
+    function drawRocket() {
+      ctx.save();
+      ctx.translate(rocket.x, rocket.y);
+      ctx.rotate(rocket.angle);
+      // gövde (basit üçgen)
+      ctx.beginPath();
+      ctx.moveTo(18, 0);
+      ctx.lineTo(-12, -10);
+      ctx.lineTo(-12, 10);
+      ctx.closePath();
+      // gövde dolgusu
+      ctx.fillStyle = '#a8d0e6';
+      ctx.fill();
+      // pencere
+      ctx.beginPath();
+      ctx.arc(-2, 0, 3.5, 0, Math.PI*2);
+      ctx.fillStyle = '#072b3a';
+      ctx.fill();
+      // itici alev (vy > 0 ise küçük, vy<0 ise daha küçük)
+      const flame = Math.min(18, 6 + Math.abs(rocket.vy));
+      ctx.beginPath();
+      ctx.moveTo(-12, -6);
+      ctx.lineTo(-12 - flame, 0);
+      ctx.lineTo(-12, 6);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(-12 - flame, 0, -12,0);
+      g.addColorStop(0, 'rgba(255,120,0,0.9)');
+      g.addColorStop(1, 'rgba(255,220,120,0.6)');
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawGates() {
+      for (const g of gates) {
+        // parlak kırmızı lazer efektleri
+        // üst blok
+        const x = g.x;
+        const gapY = g.gapY;
+        // glow
+        ctx.save();
+        ctx.shadowColor = 'rgba(255,60,60,0.9)';
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = '#ff4d4d';
+        ctx.fillRect(x, 0, GATE_WIDTH, gapY);
+        ctx.fillRect(x, gapY + GATE_GAP, GATE_WIDTH, canvas.height - (gapY + GATE_GAP));
+        ctx.restore();
+        // ince parlak çizgi ortada
+        ctx.fillStyle = '#ffb3b3';
+        ctx.fillRect(x + GATE_WIDTH*0.25, Math.max(0, gapY - 6), GATE_WIDTH*0.5, 6);
+        ctx.fillRect(x + GATE_WIDTH*0.25, gapY + GATE_GAP, GATE_WIDTH*0.5, 6);
+      }
+    }
+
+    function showGameOver() {
+      overlay.style.display = 'flex';
+      panel.innerHTML = '<h2 style="margin:0 0 6px 0">Game Over</h2><div class="small">Skor: ' + score + '</div><div class="hint">Tekrar başlamak için tıkla veya Space.</div>';
+    }
+
+    function loop() {
+      update();
+      // render
+      drawBackground();
+      drawGates();
+      drawRocket();
+      // hafif ön plan yıldız/eski parıltılar
+      requestAnimationFrame(loop);
+    }
+
+    // Başlangıç - overlay tıklandığında başlat
+    overlay.addEventListener('pointerdown', (e) => {
+      if (!running) {
+        reset();
+      }
+    });
+
+    // İlk çalıştırma
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
